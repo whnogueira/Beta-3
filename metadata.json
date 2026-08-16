@@ -1,0 +1,6 @@
+{
+  "name": "DynoMobile",
+  "description": "Dinamômetro automotivo offline com sensores do celular. Estima potência, torque e aceleração.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
