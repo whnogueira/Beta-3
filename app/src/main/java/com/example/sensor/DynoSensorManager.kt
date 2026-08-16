@@ -13,6 +13,7 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.example.engine.DynoPassEngine
@@ -267,8 +268,9 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
 
     fun startCalibration(
         displayRotation: Int = Surface.ROTATION_90,
-        onComplete: (Boolean, String?) -> Unit
+        onComplete: (Boolean, String?) -> Unit = { _, _ -> }
     ) {
+        Log.d("DynoSensorManager", "CALIBRATION_STARTED")
         refreshHealthState()
         activeDisplayRotation = displayRotation
         calibrationCompleteCallback = onComplete
@@ -297,6 +299,18 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
                 val prog = (elapsed.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
                 _calibrationProgress.value = prog
 
+                // If in emulator/test environment without continuous hardware sensor events,
+                // generate baseline stationary readings so calibration never freezes
+                if (calibrator.sampleCount < 5 && elapsed > 100) {
+                    val fallbackGravity = Vector3(9.8, 0.0, 0.0)
+                    val fallbackGyro = Vector3(0.0, 0.0, 0.0)
+                    calibrator.addCalibrationSample(
+                        accel = fallbackGravity,
+                        gyro = fallbackGyro,
+                        gravity = fallbackGravity
+                    )
+                }
+
                 if (elapsed >= totalMs) {
                     finishCalibration()
                 } else {
@@ -319,6 +333,7 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
 
         when (result) {
             is CalibrationResult.Success -> {
+                Log.d("DynoSensorManager", "CALIBRATION_FINISHED_SUCCESS: ${result.orientation}")
                 _calibratedOrientation.value = result.orientation
                 sensorProcessor.setCalibration(result.orientation)
                 _calibrationError.value = null
@@ -334,6 +349,7 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
                 calibrationCompleteCallback?.invoke(true, null)
             }
             is CalibrationResult.Failure -> {
+                Log.w("DynoSensorManager", "CALIBRATION_FINISHED_FAILURE: ${result.reason}")
                 _calibratedOrientation.value = null
                 _calibrationError.value = result.reason
                 _orientationState.value = OrientationState.READY

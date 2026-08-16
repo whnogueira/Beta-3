@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.util.Log
 import android.view.Surface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -187,7 +189,7 @@ fun OrientationCalibrationScreen(
             // CALIBRATION STATUS DEPENDING ONLY ON OrientationState
             when (orientationState) {
                 OrientationState.WAITING -> {
-                    // WAITING: vermelho, "Ajuste a posição do celular", botão desabilitado
+                    // WAITING: vermelho, "Ajuste a posição do celular", botão desabilitado ou tentar novamente
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -205,7 +207,7 @@ fun OrientationCalibrationScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "AGUARDANDO POSIÇÃO",
+                            text = if (calibrationError != null) "FALHA NA CALIBRAÇÃO" else "AGUARDANDO POSIÇÃO",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Black,
                             fontFamily = FontFamily.Monospace,
@@ -213,45 +215,63 @@ fun OrientationCalibrationScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Ajuste a posição do celular.",
+                            text = calibrationError ?: "Ajuste a posição do celular.",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.SansSerif,
                             color = TextPrimary,
                             textAlign = TextAlign.Center
                         )
-                        if (calibrationError != null) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = calibrationError ?: "",
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextSecondary,
-                                textAlign = TextAlign.Center
-                            )
-                        }
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        Button(
-                            onClick = { },
-                            enabled = false,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = DynoRed,
-                                disabledContainerColor = CarbonSurfaceVariant
-                            ),
-                            shape = RoundedCornerShape(4.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("calib_aguardando_button")
-                        ) {
-                            Text(
-                                text = "AJUSTE O CELULAR PARA CALIBRAR",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Black,
-                                color = TextMuted
-                            )
+                        if (calibrationError != null) {
+                            Button(
+                                onClick = {
+                                    Log.d("DynoCalibration", "CALIBRATE_BUTTON_CLICKED")
+                                    Log.d("DynoCalibration", "CALIBRATION_STARTED")
+                                    sensorManager.startCalibration(
+                                        displayRotation = Surface.ROTATION_90
+                                    ) { _, _ -> }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = DynoRed),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .testTag("tentar_novamente_calib_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "TENTAR NOVAMENTE",
+                                    fontSize = 12.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color.White
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = { },
+                                enabled = false,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = DynoRed,
+                                    disabledContainerColor = CarbonSurfaceVariant
+                                ),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(46.dp)
+                                    .testTag("calib_aguardando_button")
+                            ) {
+                                Text(
+                                    text = "AJUSTE O CELULAR PARA CALIBRAR",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Black,
+                                    color = TextMuted
+                                )
+                            }
                         }
                     }
                 }
@@ -302,6 +322,8 @@ fun OrientationCalibrationScreen(
 
                         Button(
                             onClick = {
+                                Log.d("DynoCalibration", "CALIBRATE_BUTTON_CLICKED")
+                                Log.d("DynoCalibration", "CALIBRATION_STARTED")
                                 sensorManager.startCalibration(
                                     displayRotation = Surface.ROTATION_90
                                 ) { _, _ -> }
@@ -328,7 +350,8 @@ fun OrientationCalibrationScreen(
                 }
 
                 OrientationState.CALIBRATING -> {
-                    // CALIBRATING: mostrar progresso
+                    // CALIBRATING: mostrar progresso 0%, 25%, 50%, 75%, 100% (botão CALIBRAR AGORA oculto)
+                    val percentInt = (progress * 100).toInt().coerceIn(0, 100)
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -346,44 +369,66 @@ fun OrientationCalibrationScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "CALIBRANDO ZERO & INCLINAÇÃO...",
-                            fontSize = 13.sp,
+                            text = "CALIBRANDO SENSORES...",
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Black,
                             fontFamily = FontFamily.Monospace,
                             color = DynoCyan
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Mantenha o veículo parado e não toque no celular.",
+                            text = "Mantenha o veículo e o smartphone parados.",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.SansSerif,
                             color = DynoYellow,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
                         LinearProgressIndicator(
                             progress = { progress },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)),
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(5.dp)),
                             color = DynoCyan,
                             trackColor = CarbonDark,
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Progresso:",
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = "$percentInt%",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Black,
+                                fontFamily = FontFamily.Monospace,
+                                color = DynoCyan
+                            )
+                        }
+
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Acelerômetro + Giroscópio + Gravidade (%.1fs / 3.0s)".format(progress * 3.0f),
+                            text = "Acelerômetro • Gravidade • Aceleração Linear • Giroscópio",
                             fontSize = 9.5.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = TextMuted
+                            color = TextMuted,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
 
                 OrientationState.CALIBRATED -> {
-                    // CALIBRATED: mostrar calibração concluída
+                    // CALIBRATED: mostrar calibração concluída e botão CONTINUAR
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -404,7 +449,7 @@ fun OrientationCalibrationScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "ORIENTAÇÃO CALIBRADA",
+                                text = "CALIBRAÇÃO CONCLUÍDA",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFamily = FontFamily.Monospace,
@@ -423,9 +468,9 @@ fun OrientationCalibrationScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        CalibrationCheckItem(label = "✓ ORIENTAÇÃO CALIBRADA", value = "OK")
-                        CalibrationCheckItem(label = "✓ EIXO LONGITUDINAL DEFINIDO", value = "Traseira → Frente")
+                        CalibrationCheckItem(label = "✓ CALIBRAÇÃO CONCLUÍDA", value = "OK")
                         CalibrationCheckItem(label = "✓ GRAVIDADE COMPENSADA", value = "OK")
+                        CalibrationCheckItem(label = "✓ REFERÊNCIA DOS SENSORES DEFINIDA", value = "OK")
                         calibratedOrientation?.let { cal ->
                             CalibrationCheckItem(label = "Inclinação do suporte:", value = "%.1f°".format(cal.pitchAngleDeg))
                         }
@@ -441,10 +486,10 @@ fun OrientationCalibrationScreen(
                                 .height(50.dp)
                                 .testTag("iniciar_passada_calibrada_button")
                         ) {
-                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(22.dp), tint = Color.Black)
+                            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(22.dp), tint = Color.Black)
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "INICIAR PASSADA",
+                                text = "CONTINUAR",
                                 fontSize = 13.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Black,
@@ -456,6 +501,8 @@ fun OrientationCalibrationScreen(
 
                         OutlinedButton(
                             onClick = {
+                                Log.d("DynoCalibration", "CALIBRATE_BUTTON_CLICKED")
+                                Log.d("DynoCalibration", "CALIBRATION_STARTED")
                                 sensorManager.startCalibration(
                                     displayRotation = Surface.ROTATION_90
                                 ) { _, _ -> }

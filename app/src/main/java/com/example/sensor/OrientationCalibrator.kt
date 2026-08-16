@@ -116,6 +116,8 @@ class OrientationCalibrator {
     private val gyroSamples = mutableListOf<Vector3>()
     private val gravitySamples = mutableListOf<Vector3>()
 
+    val sampleCount: Int get() = accelSamples.size
+
     fun reset() {
         accelSamples.clear()
         gyroSamples.clear()
