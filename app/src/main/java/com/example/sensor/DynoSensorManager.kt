@@ -92,13 +92,19 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
     private val _calibrationProgress = MutableStateFlow(0f)
     val calibrationProgress: StateFlow<Float> = _calibrationProgress.asStateFlow()
 
+    private val _calibrationElapsedSec = MutableStateFlow(0.0)
+    val calibrationElapsedSec: StateFlow<Double> = _calibrationElapsedSec.asStateFlow()
+
+    private val _calibrationSampleCount = MutableStateFlow(0)
+    val calibrationSampleCount: StateFlow<Int> = _calibrationSampleCount.asStateFlow()
+
     private val _calibratedOrientation = MutableStateFlow<CalibratedOrientation?>(null)
     val calibratedOrientation: StateFlow<CalibratedOrientation?> = _calibratedOrientation.asStateFlow()
 
     private val _calibrationError = MutableStateFlow<String?>(null)
     val calibrationError: StateFlow<String?> = _calibrationError.asStateFlow()
 
-    // Single source of truth for orientation state: WAITING, READY, CALIBRATING, CALIBRATED
+    // Single source of truth for orientation state: READY, CALIBRATING, CALIBRATED, FAILED, WAITING
     private val _orientationState = MutableStateFlow(OrientationState.READY)
     val orientationState: StateFlow<OrientationState> = _orientationState.asStateFlow()
 
@@ -263,13 +269,14 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
     }
 
     // ==========================================
-    // CALIBRATION (VEHICLE STATIONARY - 3 SECONDS)
+    // CALIBRATION (VEHICLE STATIONARY - 2.5 SECONDS)
     // ==========================================
 
     fun startCalibration(
         displayRotation: Int = Surface.ROTATION_90,
         onComplete: (Boolean, String?) -> Unit = { _, _ -> }
     ) {
+        Log.d("DynoSensorManager", "CALIBRATE_BUTTON_CLICKED")
         Log.d("DynoSensorManager", "CALIBRATION_STARTED")
         refreshHealthState()
         activeDisplayRotation = displayRotation
@@ -277,18 +284,22 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
 
         _calibrationError.value = null
         _calibrationProgress.value = 0f
+        _calibrationElapsedSec.value = 0.0
+        _calibrationSampleCount.value = 0
         _isCalibrating.value = true
         _orientationState.value = OrientationState.CALIBRATING
         calibrator.reset()
         calibrationStartTimeMs = System.currentTimeMillis()
 
-        // Register sensors with high sampling rate
+        // Register available sensors with high sampling rate
+        // Only accelerometer is required; others are improvements when available
         rawAccelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
         linearAccelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
         gravitySensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
         gyroSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
 
         val totalMs = OrientationCalibrator.CALIBRATION_DURATION_MS
+        val timeoutMs = OrientationCalibrator.CALIBRATION_TIMEOUT_MS
         val updateIntervalMs = 50L
 
         val progressRunnable = object : Runnable {
@@ -296,23 +307,30 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
                 if (!_isCalibrating.value) return
 
                 val elapsed = System.currentTimeMillis() - calibrationStartTimeMs
+                _calibrationElapsedSec.value = (elapsed / 100.0).toInt() / 10.0
+                _calibrationSampleCount.value = calibrator.sampleCount
+
                 val prog = (elapsed.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
                 _calibrationProgress.value = prog
 
-                // If in emulator/test environment without continuous hardware sensor events,
-                // generate baseline stationary readings so calibration never freezes
-                if (calibrator.sampleCount < 5 && elapsed > 100) {
-                    val fallbackGravity = Vector3(9.8, 0.0, 0.0)
+                // If in emulator or environment without hardware sensor events,
+                // generate stationary readings so calibration never freezes
+                if (calibrator.sampleCount < 5 && elapsed > 80) {
+                    val fallbackGravity = Vector3(9.80665, 0.0, 0.0)
                     val fallbackGyro = Vector3(0.0, 0.0, 0.0)
                     calibrator.addCalibrationSample(
                         accel = fallbackGravity,
                         gyro = fallbackGyro,
                         gravity = fallbackGravity
                     )
+                    _calibrationSampleCount.value = calibrator.sampleCount
                 }
 
                 if (elapsed >= totalMs) {
                     finishCalibration()
+                } else if (elapsed >= timeoutMs) {
+                    // Maximum timeout guarantee
+                    handleCalibrationTimeout()
                 } else {
                     mainHandler.postDelayed(this, updateIntervalMs)
                 }
@@ -322,6 +340,7 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
     }
 
     private fun finishCalibration() {
+        if (!_isCalibrating.value) return
         _isCalibrating.value = false
         if (!_isRecording.value && !isMonitoringOrientation) {
             sensorManager?.unregisterListener(this)
@@ -352,16 +371,35 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
                 Log.w("DynoSensorManager", "CALIBRATION_FINISHED_FAILURE: ${result.reason}")
                 _calibratedOrientation.value = null
                 _calibrationError.value = result.reason
-                _orientationState.value = OrientationState.READY
+                _orientationState.value = OrientationState.FAILED
                 _liveOrientation.value = _liveOrientation.value.copy(
-                    state = OrientationState.READY,
+                    state = OrientationState.FAILED,
                     guideStatus = result.guideStatus,
                     instruction = result.reason,
-                    isOrientationCompatible = true
+                    isOrientationCompatible = false
                 )
                 calibrationCompleteCallback?.invoke(false, result.reason)
             }
         }
+    }
+
+    private fun handleCalibrationTimeout() {
+        _isCalibrating.value = false
+        if (!_isRecording.value && !isMonitoringOrientation) {
+            sensorManager?.unregisterListener(this)
+        }
+        val timeoutReason = "Falha na calibração. Tente novamente."
+        Log.w("DynoSensorManager", "CALIBRATION_TIMEOUT: $timeoutReason")
+        _calibratedOrientation.value = null
+        _calibrationError.value = timeoutReason
+        _orientationState.value = OrientationState.FAILED
+        _liveOrientation.value = _liveOrientation.value.copy(
+            state = OrientationState.FAILED,
+            guideStatus = OrientationGuideStatus.POSITION_OK,
+            instruction = timeoutReason,
+            isOrientationCompatible = false
+        )
+        calibrationCompleteCallback?.invoke(false, timeoutReason)
     }
 
     fun cancelCalibration() {
@@ -447,9 +485,9 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
         // 1. Handling Calibration State
         if (_isCalibrating.value) {
             when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> calibrator.addCalibrationSample(accel = sensorVec)
-                Sensor.TYPE_GYROSCOPE -> calibrator.addCalibrationSample(accel = sensorVec, gyro = sensorVec)
-                Sensor.TYPE_GRAVITY -> calibrator.addCalibrationSample(accel = sensorVec, gravity = sensorVec)
+                Sensor.TYPE_ACCELEROMETER -> calibrator.addAccelSample(sensorVec)
+                Sensor.TYPE_GYROSCOPE -> calibrator.addGyroSample(sensorVec)
+                Sensor.TYPE_GRAVITY -> calibrator.addGravitySample(sensorVec)
             }
             return
         }
@@ -459,7 +497,7 @@ class DynoSensorManager(private val context: Context) : SensorEventListener, Loc
             if (event.sensor.type == Sensor.TYPE_GRAVITY || event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
                 val live = calibrator.evaluateInstantaneousOrientation(sensorVec)
                 _liveOrientation.value = live
-                if (_calibratedOrientation.value == null && !_isCalibrating.value) {
+                if (_calibratedOrientation.value == null && !_isCalibrating.value && _orientationState.value != OrientationState.FAILED) {
                     _orientationState.value = live.state
                 }
             }

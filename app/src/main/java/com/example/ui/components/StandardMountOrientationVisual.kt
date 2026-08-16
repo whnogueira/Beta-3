@@ -94,7 +94,7 @@ fun StandardMountOrientationVisual(
         OrientationState.CALIBRATED -> DynoGreen
         OrientationState.READY -> DynoCyan
         OrientationState.CALIBRATING -> DynoCyan
-        OrientationState.WAITING -> DynoRed
+        OrientationState.FAILED, OrientationState.WAITING -> DynoRed
     }
 
     Column(
@@ -377,7 +377,7 @@ fun StandardMountOrientationVisual(
                     OrientationState.CALIBRATED -> Icons.Default.CheckCircle
                     OrientationState.READY -> Icons.Default.CheckCircle
                     OrientationState.CALIBRATING -> Icons.Default.Sensors
-                    OrientationState.WAITING -> Icons.Default.Warning
+                    OrientationState.FAILED, OrientationState.WAITING -> Icons.Default.Warning
                 },
                 contentDescription = null,
                 tint = statusColor,
@@ -392,6 +392,7 @@ fun StandardMountOrientationVisual(
                         OrientationState.CALIBRATED -> "Posição OK — Pronto para medir."
                         OrientationState.READY -> "Posição correta — pronto para calibrar."
                         OrientationState.CALIBRATING -> "Calibrando zero & inclinação..."
+                        OrientationState.FAILED -> "Falha na calibração. Tente novamente."
                         OrientationState.WAITING -> "Ajuste a posição do celular."
                     },
                     fontSize = 11.5.sp,

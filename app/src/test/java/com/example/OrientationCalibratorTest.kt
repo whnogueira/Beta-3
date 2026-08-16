@@ -67,4 +67,18 @@ class OrientationCalibratorTest {
         val proj = cal.projectLongitudinal(testForwardLinearAccel)
         assertTrue("Projeção longitudinal para a frente deve ser positiva", proj > 0.0)
     }
+
+    @Test
+    fun testCalibration_separateSensorCallbacks_succeeds() {
+        val calibrator = OrientationCalibrator()
+        // Simulate separate onSensorChanged events arriving for accel, gyro, gravity
+        for (i in 0..30) {
+            calibrator.addAccelSample(Vector3(9.8, 0.05, 0.0))
+            calibrator.addGyroSample(Vector3(0.001, 0.001, 0.002))
+            calibrator.addGravitySample(Vector3(9.8, 0.0, 0.0))
+        }
+
+        val result = calibrator.computeCalibration()
+        assertTrue("Calibração com callbacks separados de sensores deve ter sucesso", result is CalibrationResult.Success)
+    }
 }

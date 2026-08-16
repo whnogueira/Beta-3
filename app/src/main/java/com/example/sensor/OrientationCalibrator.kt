@@ -64,10 +64,11 @@ data class CalibratedOrientation(
  * Single source of truth for orientation and calibration flow.
  */
 enum class OrientationState {
-    WAITING,
     READY,
     CALIBRATING,
-    CALIBRATED
+    CALIBRATED,
+    FAILED,
+    WAITING
 }
 
 enum class OrientationGuideStatus {
@@ -104,10 +105,11 @@ sealed class CalibrationResult {
 class OrientationCalibrator {
 
     companion object {
-        const val CALIBRATION_DURATION_MS = 3000L
-        const val MIN_SAMPLES_REQUIRED = 20
-        const val MAX_ALLOWED_ACCEL_VARIANCE = 1.20 // m/s² max variance during stationary rest
-        const val MAX_ALLOWED_GYRO_SPEED = 0.80 // rad/s max rotation rate during stationary rest
+        const val CALIBRATION_DURATION_MS = 2500L
+        const val CALIBRATION_TIMEOUT_MS = 5000L
+        const val MIN_SAMPLES_REQUIRED = 5 // Realistic minimum for 2.5s on any device/emulator
+        const val MAX_ALLOWED_ACCEL_VARIANCE = 1.50 // m/s² max variance during stationary rest
+        const val MAX_ALLOWED_GYRO_SPEED = 0.60 // rad/s max rotation rate during stationary rest
         const val MAX_IN_PASS_ANGULAR_DRIFT_DEG = 14.0 // Max phone rotation in mount before invalidation
         const val MAX_IN_PASS_ANGULAR_VELOCITY = 1.50 // rad/s max in-pass jerk
     }
@@ -116,7 +118,7 @@ class OrientationCalibrator {
     private val gyroSamples = mutableListOf<Vector3>()
     private val gravitySamples = mutableListOf<Vector3>()
 
-    val sampleCount: Int get() = accelSamples.size
+    val sampleCount: Int get() = accelSamples.size.coerceAtLeast(gravitySamples.size)
 
     fun reset() {
         accelSamples.clear()
@@ -124,12 +126,24 @@ class OrientationCalibrator {
         gravitySamples.clear()
     }
 
+    fun addAccelSample(accel: Vector3) {
+        accelSamples.add(accel)
+    }
+
+    fun addGyroSample(gyro: Vector3) {
+        gyroSamples.add(gyro)
+    }
+
+    fun addGravitySample(gravity: Vector3) {
+        gravitySamples.add(gravity)
+    }
+
     fun addCalibrationSample(
-        accel: Vector3,
+        accel: Vector3? = null,
         gyro: Vector3? = null,
         gravity: Vector3? = null
     ) {
-        accelSamples.add(accel)
+        if (accel != null) accelSamples.add(accel)
         if (gyro != null) gyroSamples.add(gyro)
         if (gravity != null) gravitySamples.add(gravity)
     }
@@ -179,13 +193,17 @@ class OrientationCalibrator {
     fun computeCalibration(
         displayRotation: Int = 1
     ): CalibrationResult {
-        val totalAccelCount = accelSamples.size
-        if (totalAccelCount < MIN_SAMPLES_REQUIRED) {
+        val totalCount = accelSamples.size.coerceAtLeast(gravitySamples.size)
+        if (totalCount < MIN_SAMPLES_REQUIRED) {
             return CalibrationResult.Failure("Amostras insuficientes coletadas durante a calibração.")
         }
 
         // 1. Compute Mean Gravity Vector
         val gravitySource = if (gravitySamples.size >= MIN_SAMPLES_REQUIRED) gravitySamples else accelSamples
+        if (gravitySource.isEmpty()) {
+            return CalibrationResult.Failure("Não foi possível obter dados do acelerômetro.")
+        }
+
         var sumGrav = Vector3()
         for (g in gravitySource) {
             sumGrav += g
@@ -193,19 +211,21 @@ class OrientationCalibrator {
         val meanGravity = sumGrav / gravitySource.size.toDouble()
         val gravityMag = meanGravity.magnitude
 
-        if (gravityMag < 5.0 || gravityMag > 15.0) {
+        if (gravityMag < 4.0 || gravityMag > 16.0) {
             return CalibrationResult.Failure("Mantenha o smartphone e o veículo parados.")
         }
 
         // 2. Check Accelerometer Stability (Variance / Noise)
-        var accelVarianceSum = 0.0
-        for (a in accelSamples) {
-            val diff = (a - meanGravity).magnitude
-            accelVarianceSum += diff * diff
-        }
-        val accelStdDev = sqrt(accelVarianceSum / totalAccelCount)
-        if (accelStdDev > MAX_ALLOWED_ACCEL_VARIANCE) {
-            return CalibrationResult.Failure("Mantenha o smartphone e o veículo parados.")
+        if (accelSamples.isNotEmpty()) {
+            var accelVarianceSum = 0.0
+            for (a in accelSamples) {
+                val diff = (a - meanGravity).magnitude
+                accelVarianceSum += diff * diff
+            }
+            val accelStdDev = sqrt(accelVarianceSum / accelSamples.size)
+            if (accelStdDev > MAX_ALLOWED_ACCEL_VARIANCE) {
+                return CalibrationResult.Failure("Mantenha o smartphone e o veículo parados.")
+            }
         }
 
         // 3. Check Gyroscope Stability
